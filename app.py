@@ -477,7 +477,7 @@ with right:
 
     if excel_path.exists():
         st.download_button(
-            "📊 Descargar Excel técnico",
+            "📊 Descargar Excel claro + técnico",
             data=excel_path.read_bytes(),
             file_name=excel_path.name,
             mime=(

@@ -3005,6 +3005,12 @@ def exportar(
 
     comps_df = pd.DataFrame(comps_rows)
 
+    # Primera hoja: instrucciones claras de apuesta.
+    apuestas_claras = crear_apuestas_claras_v81(
+        top,
+        variants,
+    )
+
     config = pd.DataFrame(
         [
             ["Version", VERSION],
@@ -3468,7 +3474,7 @@ def main():
 #
 # ============================================================
 
-VERSION = "V8.1-ROBUST"
+VERSION = "V8.1-ROBUST-VISUAL"
 
 # Umbrales estrictos: deliberadamente más exigentes que V8.
 P_MIN_DOG_GOL_STABLE = 0.56
@@ -6436,6 +6442,140 @@ def crear_top30_v81(
     ]
 
 
+
+# ============================================================
+# HOJA SIMPLE PARA EL USUARIO
+# ============================================================
+
+def crear_apuestas_claras_v81(top, variants):
+    """
+    Crea una vista de una fila por partido con los mercados separados
+    como los ve el usuario en la casa de apuestas.
+
+    IMPORTANTE:
+    - No inventa mercados no modelados.
+    - "RESULTADO" queda como NO INCLUIDO porque V8.1 actual no calcula
+      1X2 / doble oportunidad como pata del builder.
+    """
+    columnas = [
+        "N°",
+        "ESTADO",
+        "FECHA",
+        "HORA",
+        "COMPETICIÓN",
+        "PARTIDO",
+        "RESULTADO",
+        "GOL DE EQUIPO",
+        "CÓRNERS DE EQUIPO",
+        "TOTAL GOLES",
+        "TARJETAS",
+        "CÓRNERS 1T",
+        "GOL 1T",
+        "CUOTA MÍNIMA",
+        "CUOTA REAL",
+        "CUMPLE CUOTA",
+        "FIABILIDAD",
+        "PROB. BUILDER",
+        "APUESTA COMPLETA",
+        "OBSERVACIÓN",
+    ]
+
+    if top is None or top.empty:
+        return pd.DataFrame(columns=columnas)
+
+    rows = []
+
+    for _, r in top.iterrows():
+        variante = str(r.get("VarianteMasSegura", "") or "")
+        favorito = str(r.get("Favorito", "") or "")
+        dog = str(r.get("Underdog", "") or "")
+        local = str(r.get("Local", "") or "")
+        visita = str(r.get("Visitante", "") or "")
+
+        # Etiqueta local/visitante para que sea aún más fácil construirla.
+        if favorito == local:
+            fav_label = f"{favorito} (LOCAL)"
+        elif favorito == visita:
+            fav_label = f"{favorito} (VISITA)"
+        else:
+            fav_label = favorito
+
+        if dog == local:
+            dog_label = f"{dog} (LOCAL)"
+        elif dog == visita:
+            dog_label = f"{dog} (VISITA)"
+        else:
+            dog_label = dog
+
+        resultado_market = "NO INCLUIDO"
+        gol_equipo = f"{dog_label}: MARCA 1+ GOL"
+        corners_equipo = f"{fav_label}: 4+ CÓRNERS"
+        total_goles = "MENOS DE 4.5 GOLES"
+        tarjetas = "—"
+        corners_1t = "—"
+        gol_1t = "—"
+
+        if variante.startswith("BLINDADO"):
+            corners_equipo = f"{fav_label}: 3+ CÓRNERS"
+            total_goles = "MENOS DE 5.5 GOLES"
+
+        if "4+ TARJETAS" in variante:
+            tarjetas = "4+ TARJETAS TOTALES"
+
+        if "3+ CORNERS 1T" in variante:
+            corners_1t = "3+ CÓRNERS TOTALES 1T"
+
+        if "GOL 1T" in variante:
+            gol_1t = "MÁS DE 0.5 GOLES 1T"
+
+        patas = [
+            gol_equipo,
+            corners_equipo,
+            total_goles,
+        ]
+
+        if tarjetas != "—":
+            patas.append(tarjetas)
+
+        if corners_1t != "—":
+            patas.append(corners_1t)
+
+        if gol_1t != "—":
+            patas.append(gol_1t)
+
+        apuesta_completa = " + ".join(patas)
+
+        rows.append({
+            "N°": int(r.get("Ranking", len(rows) + 1)),
+            "ESTADO": str(r.get("Accion", "")),
+            "FECHA": r.get("Fecha", ""),
+            "HORA": r.get("HoraPeru", ""),
+            "COMPETICIÓN": r.get("Competicion", ""),
+            "PARTIDO": f"{local} vs {visita}",
+            "RESULTADO": resultado_market,
+            "GOL DE EQUIPO": gol_equipo,
+            "CÓRNERS DE EQUIPO": corners_equipo,
+            "TOTAL GOLES": total_goles,
+            "TARJETAS": tarjetas,
+            "CÓRNERS 1T": corners_1t,
+            "GOL 1T": gol_1t,
+            "CUOTA MÍNIMA": r.get("CuotaMinMasSegura", np.nan),
+            "CUOTA REAL": "",
+            "CUMPLE CUOTA": "PENDIENTE",
+            "FIABILIDAD": r.get("ReliabilityScore", np.nan),
+            "PROB. BUILDER": r.get("P_VarianteMasSegura", np.nan),
+            "APUESTA COMPLETA": apuesta_completa,
+            "OBSERVACIÓN": (
+                "APOSTAR solo si CUOTA REAL >= CUOTA MÍNIMA"
+                if str(r.get("Accion", "")) == "APOSTAR"
+                else "VIGILAR: todavía no cumple todos los filtros estrictos"
+            ),
+        })
+
+    return pd.DataFrame(rows, columns=columnas)
+
+
+
 # ============================================================
 # EXPORT V8.1
 # ============================================================
@@ -6568,6 +6708,15 @@ def exportar_v81(
         ARCHIVO_XLSX_V81,
         engine="openpyxl",
     ) as writer:
+        # PRIMERA HOJA: lectura simple para apostar.
+        # Dejamos cuatro filas arriba para título/leyenda.
+        apuestas_claras.to_excel(
+            writer,
+            sheet_name="APUESTAS_CLARAS",
+            index=False,
+            startrow=4,
+        )
+
         top.to_excel(
             writer,
             sheet_name="TOP_30_MAX",
@@ -6608,6 +6757,8 @@ def exportar_v81(
             Font,
             PatternFill,
             Alignment,
+            Border,
+            Side,
         )
 
         from openpyxl.utils import (
@@ -6667,6 +6818,275 @@ def exportar_v81(
                     ),
                     42,
                 )
+
+        # ====================================================
+        # APUESTAS_CLARAS: hoja principal, visual y fácil de leer
+        # ====================================================
+        ws_simple = wb["APUESTAS_CLARAS"]
+
+        max_col_simple = 20
+
+        # Título
+        ws_simple.merge_cells(
+            start_row=1,
+            start_column=1,
+            end_row=1,
+            end_column=max_col_simple,
+        )
+        title = ws_simple.cell(1, 1)
+        title.value = "BET BUILDER V8.1 ROBUST — QUÉ APOSTAR"
+        title.font = Font(
+            bold=True,
+            color="FFFFFF",
+            size=18,
+        )
+        title.fill = PatternFill(
+            "solid",
+            fgColor="102A43",
+        )
+        title.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
+        ws_simple.row_dimensions[1].height = 30
+
+        # Instrucción breve
+        ws_simple.merge_cells(
+            start_row=2,
+            start_column=1,
+            end_row=2,
+            end_column=max_col_simple,
+        )
+        instruction = ws_simple.cell(2, 1)
+        instruction.value = (
+            "LEE ESTA HOJA PRIMERO: construye exactamente las patas indicadas. "
+            "Solo una fila APOSTAR es válida si la CUOTA REAL alcanza la CUOTA MÍNIMA. "
+            "VIGILAR = no apostar todavía."
+        )
+        instruction.font = Font(
+            bold=True,
+            color="203040",
+            size=10,
+        )
+        instruction.fill = PatternFill(
+            "solid",
+            fgColor="D9EAF7",
+        )
+        instruction.alignment = Alignment(
+            wrap_text=True,
+            vertical="center",
+        )
+        ws_simple.row_dimensions[2].height = 36
+
+        # Leyenda
+        ws_simple["A3"] = "🟢 APOSTAR"
+        ws_simple["B3"] = "🟡 VIGILAR"
+        ws_simple["C3"] = "CUOTA REAL: escribir la ofrecida por la casa"
+        ws_simple["F3"] = "RESULTADO = NO INCLUIDO mientras el modelo no calcule 1X2/doble oportunidad"
+
+        ws_simple["A3"].fill = PatternFill("solid", fgColor="C6EFCE")
+        ws_simple["B3"].fill = PatternFill("solid", fgColor="FFF2CC")
+        ws_simple["C3"].fill = PatternFill("solid", fgColor="DDEBF7")
+        ws_simple["F3"].fill = PatternFill("solid", fgColor="F2F2F2")
+
+        for cell in ("A3", "B3", "C3", "F3"):
+            ws_simple[cell].font = Font(bold=True)
+            ws_simple[cell].alignment = Alignment(
+                wrap_text=True,
+                vertical="center",
+            )
+
+        # Cabecera real está en fila 5 por startrow=4.
+        header_row = 5
+
+        header_map = {
+            c.value: c.column
+            for c in ws_simple[header_row]
+        }
+
+        for cell in ws_simple[header_row]:
+            cell.font = Font(
+                bold=True,
+                color="FFFFFF",
+                size=10,
+            )
+            cell.fill = PatternFill(
+                "solid",
+                fgColor="1F4E78",
+            )
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True,
+            )
+
+        ws_simple.freeze_panes = "A6"
+        ws_simple.auto_filter.ref = (
+            f"A5:{get_column_letter(max_col_simple)}"
+            f"{max(ws_simple.max_row, 5)}"
+        )
+
+        # Anchos pensados para celular/Excel.
+        simple_widths = {
+            "A": 5,
+            "B": 12,
+            "C": 12,
+            "D": 8,
+            "E": 21,
+            "F": 28,
+            "G": 17,
+            "H": 31,
+            "I": 32,
+            "J": 20,
+            "K": 22,
+            "L": 24,
+            "M": 21,
+            "N": 14,
+            "O": 14,
+            "P": 15,
+            "Q": 13,
+            "R": 14,
+            "S": 58,
+            "T": 46,
+        }
+
+        for letter, width in simple_widths.items():
+            ws_simple.column_dimensions[letter].width = width
+
+        thin = Side(
+            style="thin",
+            color="D9E2F3",
+        )
+
+        for rr in range(6, ws_simple.max_row + 1):
+            for cc in range(1, max_col_simple + 1):
+                cell = ws_simple.cell(rr, cc)
+                cell.alignment = Alignment(
+                    vertical="top",
+                    wrap_text=True,
+                )
+                cell.border = Border(
+                    bottom=thin,
+                )
+
+            estado = str(ws_simple.cell(
+                rr,
+                header_map.get("ESTADO", 2),
+            ).value or "")
+
+            if estado == "APOSTAR":
+                row_fill = "E2F0D9"
+                strong_fill = "70AD47"
+                strong_font = "FFFFFF"
+            elif estado == "VIGILAR":
+                row_fill = "FFF2CC"
+                strong_fill = "FFC000"
+                strong_font = "5B4500"
+            else:
+                row_fill = "F2F2F2"
+                strong_fill = "A6A6A6"
+                strong_font = "FFFFFF"
+
+            # Color suave de toda la fila.
+            for cc in range(1, max_col_simple + 1):
+                ws_simple.cell(rr, cc).fill = PatternFill(
+                    "solid",
+                    fgColor=row_fill,
+                )
+
+            # ESTADO destacado.
+            estado_cell = ws_simple.cell(
+                rr,
+                header_map["ESTADO"],
+            )
+            estado_cell.fill = PatternFill(
+                "solid",
+                fgColor=strong_fill,
+            )
+            estado_cell.font = Font(
+                bold=True,
+                color=strong_font,
+            )
+            estado_cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+            )
+
+            # CUOTA REAL editable.
+            real_cell = ws_simple.cell(
+                rr,
+                header_map["CUOTA REAL"],
+            )
+            real_cell.fill = PatternFill(
+                "solid",
+                fgColor="FFF2CC",
+            )
+            real_cell.number_format = "0.00"
+
+            # CUOTA MÍNIMA.
+            min_cell = ws_simple.cell(
+                rr,
+                header_map["CUOTA MÍNIMA"],
+            )
+            min_cell.fill = PatternFill(
+                "solid",
+                fgColor="D9EAF7",
+            )
+            min_cell.number_format = "0.00"
+            min_cell.font = Font(
+                bold=True,
+                color="1F4E78",
+            )
+
+            # CUMPLE CUOTA fórmula.
+            c_real = get_column_letter(
+                header_map["CUOTA REAL"]
+            )
+            c_min = get_column_letter(
+                header_map["CUOTA MÍNIMA"]
+            )
+            ok_cell = ws_simple.cell(
+                rr,
+                header_map["CUMPLE CUOTA"],
+            )
+            ok_cell.value = (
+                f'=IF({c_real}{rr}="","PENDIENTE",'
+                f'IF(AND({c_real}{rr}>={c_min}{rr},'
+                f'{c_real}{rr}>={CUOTA_COMBINADA_MIN}),"SI","NO"))'
+            )
+            ok_cell.font = Font(
+                bold=True,
+            )
+            ok_cell.alignment = Alignment(
+                horizontal="center",
+            )
+
+            # % fiabilidad y probabilidad.
+            ws_simple.cell(
+                rr,
+                header_map["FIABILIDAD"],
+            ).number_format = "0.0%"
+
+            ws_simple.cell(
+                rr,
+                header_map["PROB. BUILDER"],
+            ).number_format = "0.0%"
+
+            # APUESTA COMPLETA resaltada.
+            full_cell = ws_simple.cell(
+                rr,
+                header_map["APUESTA COMPLETA"],
+            )
+            full_cell.fill = PatternFill(
+                "solid",
+                fgColor="EAF2F8",
+            )
+            full_cell.font = Font(
+                bold=True,
+                color="17365D",
+            )
+
+            ws_simple.row_dimensions[rr].height = 52
 
         # Precio real en VARIANTES.
         ws = wb[
